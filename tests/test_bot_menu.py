@@ -16,7 +16,7 @@ async def test_setup_bot_menu_publishes_expected_commands():
     cmds = app.bot.set_my_commands.call_args[0][0]
     names = [c.command for c in cmds]
     assert names == [
-        "help", "status", "stats", "mcp", "export", "models", "sync", "reset",
+        "help", "status", "stats", "mcp", "export", "sync", "reset",
     ]
     # All entries must have a description (non-empty)
     assert all(c.description for c in cmds)

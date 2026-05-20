@@ -21,7 +21,6 @@ logger = logging.getLogger(__name__)
 _HELP_TO_KIND = {
     "help:set_jina": "jina",
     "help:set_deepgram": "deepgram",
-    "help:set_openrouter": "key",
     "help:set_github": "github",
     "help:set_vps": "vps",
     "help:set_inbox": "inbox",
@@ -32,8 +31,7 @@ def build_help_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔑 Ключ Jina",       callback_data="help:set_jina"),
          InlineKeyboardButton("🔑 Ключ Deepgram",   callback_data="help:set_deepgram")],
-        [InlineKeyboardButton("🔑 Ключ OpenRouter", callback_data="help:set_openrouter"),
-         InlineKeyboardButton("💾 GitHub-токен",    callback_data="help:set_github")],
+        [InlineKeyboardButton("💾 GitHub-токен",    callback_data="help:set_github")],
         [InlineKeyboardButton("🖥 VPS-доступ",      callback_data="help:set_vps"),
          InlineKeyboardButton("📺 Канал-инбокс",     callback_data="help:set_inbox")],
         [InlineKeyboardButton("⚠️ Первоначальная настройка",
@@ -103,7 +101,7 @@ async def on_setup_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> No
 def register_help_buttons(app: Application) -> None:
     app.add_handler(CallbackQueryHandler(
         on_help_button,
-        pattern=r"^help:(set_jina|set_deepgram|set_openrouter|set_github|set_vps|set_inbox|setup_init)$",
+        pattern=r"^help:(set_jina|set_deepgram|set_github|set_vps|set_inbox|setup_init)$",
     ))
     app.add_handler(CallbackQueryHandler(
         on_setup_confirm,

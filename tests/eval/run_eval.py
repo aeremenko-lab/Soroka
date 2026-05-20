@@ -3,15 +3,11 @@
 Usage:
     python -m tests.eval.run_eval                    # full set, baseline pipeline
     python -m tests.eval.run_eval --tag morphology   # subset by tag
-    python -m tests.eval.run_eval --primary-model anthropic/claude-haiku-4-5
 
 Required env (loaded via dotenv from .env):
-    JINA_API_KEY        — Jina embeddings key (free tier OK)
-    OPENROUTER_API_KEY  — OpenRouter key for intent parsing + rerank
-
-Optional env:
-    EVAL_PRIMARY_MODEL  — defaults to anthropic/claude-haiku-4-5
-    EVAL_FALLBACK_MODEL — defaults to openai/gpt-4o-mini
+    SOROKA_JINA_API_KEY   — Jina embeddings key (free tier OK)
+    SOROKA_LLM_MODEL      — openai:<model> or gemini:<model>
+    SOROKA_OPENAI_API_KEY or SOROKA_GEMINI_API_KEY
 """
 import argparse
 import asyncio
@@ -21,6 +17,7 @@ import sys
 
 from dotenv import load_dotenv
 
+from src.adapters.llm import build_llm_client
 from tests.eval.metrics import (
     aggregate, mrr, precision_at_k, recall_at_k,
 )
@@ -89,28 +86,23 @@ async def main() -> int:
         default="tests.eval.queries",
         help="dotted path of module exposing QUERIES (default tests.eval.queries)",
     )
-    parser.add_argument(
-        "--primary-model",
-        default=os.environ.get("EVAL_PRIMARY_MODEL", "anthropic/claude-haiku-4-5"),
-    )
-    parser.add_argument(
-        "--fallback-model",
-        default=os.environ.get("EVAL_FALLBACK_MODEL", "openai/gpt-4o-mini"),
-    )
     args = parser.parse_args()
     queries_module = importlib.import_module(args.queries_module)
     QUERIES = queries_module.QUERIES
     print(f"queries={args.queries_module} (n={len(QUERIES)})")
 
     load_dotenv()
-    jina_key = os.environ.get("JINA_API_KEY", "").strip()
-    openrouter_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    jina_key = (
+        os.environ.get("SOROKA_JINA_API_KEY", "").strip()
+        or os.environ.get("JINA_API_KEY", "").strip()
+    )
+    llm = build_llm_client()
     if not jina_key:
-        print("ERROR: JINA_API_KEY missing. Put it in .env or export it.",
+        print("ERROR: SOROKA_JINA_API_KEY missing. Put it in .env or export it.",
               file=sys.stderr)
         return 2
-    if not openrouter_key:
-        print("ERROR: OPENROUTER_API_KEY missing. Put it in .env or export it.",
+    if llm is None:
+        print("ERROR: SOROKA_LLM_MODEL and matching provider key are missing.",
               file=sys.stderr)
         return 2
 
@@ -122,14 +114,11 @@ async def main() -> int:
             return 2
         print(f"running {len(queries_subset)} queries with tag={args.tag!r}")
 
-    print(f"primary_model={args.primary_model}")
-    print(f"fallback_model={args.fallback_model}")
+    print(f"llm={llm.selector}")
 
     results, _ = await run_all(
         jina_key=jina_key,
-        openrouter_key=openrouter_key,
-        primary_model=args.primary_model,
-        fallback_model=args.fallback_model,
+        llm=llm,
         queries_subset=queries_subset,
     )
     _print_report(results)

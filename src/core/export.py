@@ -12,6 +12,7 @@ from typing import Optional
 _SECRET_COLUMNS = (
     "jina_api_key",
     "deepgram_api_key",
+    # Obsolete LLM-router column from older versions.
     "openrouter_key",
     "github_token",
     "github_mirror_repo",
@@ -59,8 +60,11 @@ def _make_safe_db_copy(src: Path, dst: Path) -> None:
         dst_conn = sqlite3.connect(str(dst))
         try:
             src_conn.backup(dst_conn)
-            sets = ", ".join(f"{c}=NULL" for c in _SECRET_COLUMNS)
-            dst_conn.execute(f"UPDATE owners SET {sets}")
+            cols = _existing_columns(dst_conn, "owners")
+            redact = [c for c in _SECRET_COLUMNS if c in cols]
+            if redact:
+                sets = ", ".join(f"{c}=NULL" for c in redact)
+                dst_conn.execute(f"UPDATE owners SET {sets}")
             dst_conn.execute("UPDATE owners SET setup_step='jina'")
             dst_conn.commit()
             dst_conn.execute("VACUUM")
@@ -83,6 +87,10 @@ def _read_notes(db_path: Path) -> list[dict]:
         return [dict(zip(cols, row)) for row in cur.fetchall()]
     finally:
         conn.close()
+
+
+def _existing_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
 
 
 def _readme() -> str:

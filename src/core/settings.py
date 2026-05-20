@@ -2,7 +2,7 @@ import os
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from dotenv import load_dotenv
+from src.core.env_store import load_env_file
 
 DEFAULT_OWNER_TZ = "Europe/Moscow"
 
@@ -16,7 +16,7 @@ class Settings:
 
 
 def load_settings() -> Settings:
-    load_dotenv()
+    load_env_file(override=False)
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     owner_str = os.environ.get("OWNER_TELEGRAM_ID", "").strip()
     if not token or not owner_str:

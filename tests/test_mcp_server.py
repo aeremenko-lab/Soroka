@@ -13,9 +13,6 @@ async def test_mcp_search_returns_hits(tmp_path, monkeypatch):
     init_schema(conn)
     create_or_get_owner(conn, telegram_id=1)
     update_owner_field(conn, 1, "jina_api_key", "k")
-    update_owner_field(conn, 1, "openrouter_key", "k")
-    update_owner_field(conn, 1, "primary_model", "x")
-    update_owner_field(conn, 1, "fallback_model", "y")
 
     nid = insert_note(conn, Note(
         owner_id=1, tg_message_id=1, tg_chat_id=-1,
@@ -30,8 +27,8 @@ async def test_mcp_search_returns_hits(tmp_path, monkeypatch):
         })(),
     )
     monkeypatch.setattr(
-        "src.mcp.server.OpenRouterClient",
-        lambda api_key: type("O", (), {
+        "src.mcp.server.build_llm_client",
+        lambda: type("L", (), {
             "complete": AsyncMock(side_effect=Exception("skip")),
         })(),
     )
@@ -67,12 +64,9 @@ async def test_tool_delete_note_soft_deletes(tmp_path):
 async def test_tool_search_supports_since_days_kind_and_excludes(tmp_path):
     """Explicit MCP params bypass intent detection and are applied directly.
 
-    Adaptation note: rerank is called unconditionally but owner has no
-    openrouter_key, so OpenRouterClient.complete raises → rerank falls back to
-    candidates[:top_k] order. No extra patching needed because both
-    parse_intent and rerank have try/except fallbacks. JinaClient is patched
-    via direct module attribute assignment so embed() returns a zero vector
-    without a real API call.
+    Adaptation note: without configured LLM, rerank falls back to the hybrid
+    order. JinaClient is patched via direct module attribute assignment so
+    embed() returns a zero vector without a real API call.
     """
     from src.core.db import open_db, init_schema
     from src.core.owners import create_or_get_owner, update_owner_field

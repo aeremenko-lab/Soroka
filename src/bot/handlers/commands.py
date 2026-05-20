@@ -61,6 +61,7 @@ VPS_REJECT = (
 
 from src.adapters.github_mirror import GitHubMirror, GitHubMirrorError
 from src.bot.auth import is_owner
+from src.adapters.llm import describe_llm_config
 from src.core import sync_deleted
 from src.core.export import build_export
 from src.core.owners import get_owner
@@ -81,8 +82,6 @@ HELP_TEXT = (
     "/status — текущие настройки\n"
     "/setjina — заменить ключ Jina\n"
     "/setdeepgram — заменить ключ Deepgram\n"
-    "/setkey — заменить ключ OpenRouter\n"
-    "/models — выбрать модели primary/fallback\n"
     "/setgithub — заменить GitHub-токен и репо\n"
     "/setvps — задать IP/юзера VPS (для /mcp)\n"
     "/setinbox — сменить канал-инбокс\n"
@@ -150,9 +149,7 @@ async def status_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
         f"*Soroka /status*\n\n"
         f"🔑 Jina:       {_mask(owner.jina_api_key)}\n"
         f"🔑 Deepgram:   {_mask(owner.deepgram_api_key)}\n"
-        f"🔑 OpenRouter: {_mask(owner.openrouter_key)}\n"
-        f"🟢 primary:    `{owner.primary_model or '—'}`\n"
-        f"🟡 fallback:   `{owner.fallback_model or '—'}`\n"
+        f"🧠 LLM:        `{describe_llm_config()}`\n"
         f"💾 GitHub:     `{owner.github_mirror_repo or '—'}`\n"
         f"{backup_line}\n"
         f"📺 Inbox:      `{owner.inbox_chat_id or '—'}`\n"
@@ -190,16 +187,15 @@ async def reset_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 from src.bot.handlers.setup_github import (
     REPO_INSTRUCTION as _GH_REPO_INSTRUCTION,
     TOKEN_INSTRUCTION as _GH_TOKEN_INSTRUCTION,
-    REPO_PATTERN as _GH_REPO_PATTERN,
     REPO_REJECT as _GH_REPO_REJECT,
     TOKEN_REJECT as _GH_TOKEN_REJECT,
     is_token_like as _gh_is_token_like,
+    normalize_repo_ref as _gh_normalize_repo_ref,
 )
 
 PENDING_PROMPTS = {
     "jina":      ("jina_api_key", "Пришли новый ключ Jina."),
     "deepgram":  ("deepgram_api_key", "Пришли новый ключ Deepgram."),
-    "key":       ("openrouter_key", "Пришли новый ключ OpenRouter."),
     "github":    ("github_pair", "Шаг 1/2 — " + _GH_REPO_INSTRUCTION),
     "vps":       ("vps_pair", VPS_PROMPT),
     "inbox":     ("inbox", "Форвардни сюда сообщение из нового канала."),
@@ -233,7 +229,6 @@ async def pending_set_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
     text = (update.message.text or "").strip()
     from src.adapters.jina import JinaClient
     from src.adapters.deepgram import DeepgramClient
-    from src.adapters.openrouter import OpenRouterClient
     from src.adapters.github_mirror import GitHubMirror, GitHubMirrorError
     from src.core.owners import update_owner_field
 
@@ -251,24 +246,19 @@ async def pending_set_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
             return
         update_owner_field(conn, owner_id, "deepgram_api_key", text)
 
-    elif pending == "key":
-        if not await OpenRouterClient(api_key=text).validate_key():
-            await update.message.reply_text("Не подошёл. /cancel или попробуй ещё раз.")
-            return
-        update_owner_field(conn, owner_id, "openrouter_key", text)
-
     elif pending == "github":
         repo = ctx.user_data.get("github_repo_pending")
         if not repo:
-            if not _GH_REPO_PATTERN.match(text):
+            repo = _gh_normalize_repo_ref(text)
+            if repo is None:
                 await update.message.reply_text(
                     _GH_REPO_REJECT + "\n\n/cancel или попробуй ещё раз.",
                     parse_mode="Markdown",
                 )
                 return
-            ctx.user_data["github_repo_pending"] = text
+            ctx.user_data["github_repo_pending"] = repo
             await update.message.reply_text(
-                f"✓ Репо `{text}` записал.\n\nШаг 2/2 — " + _GH_TOKEN_INSTRUCTION,
+                f"✓ Репо `{repo}` записал.\n\nШаг 2/2 — " + _GH_TOKEN_INSTRUCTION,
                 parse_mode="Markdown",
             )
             return
@@ -282,7 +272,9 @@ async def pending_set_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
             await GitHubMirror(token=text, repo=repo).validate()
         except GitHubMirrorError as e:
             await update.message.reply_text(
-                f"GitHub отверг настройки: {e}.\nПроверь токен (галка `repo`) или /cancel."
+                f"GitHub отверг настройки: {e}.\n"
+                "Проверь, что fine-grained token выбран именно для этого репо "
+                "и имеет Contents: Read and write, или /cancel."
             )
             return
         update_owner_field(conn, owner_id, "github_token", text)

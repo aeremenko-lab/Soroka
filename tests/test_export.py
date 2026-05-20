@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import zipfile
 from src.core.db import open_db, init_schema
-from src.core.owners import create_or_get_owner
+from src.core.owners import create_or_get_owner, update_owner_field
 from src.core.notes import insert_note
 from src.core.models import Note
 from src.core.export import build_export
@@ -77,9 +77,9 @@ def test_export_excludes_soft_deleted_notes(tmp_path):
 
 
 def test_export_strips_owner_secrets(tmp_path):
-    """Exported DB must not leak API keys, GitHub tokens, VPS host/user,
-    inbox_chat_id, or mirror repo. setup_step is reset so a recipient is
-    forced through the wizard before the bot can run."""
+    """Exported DB must not leak env-backed API keys, GitHub tokens, VPS
+    host/user, inbox_chat_id, or mirror repo. setup_step is reset so a
+    recipient is forced through the wizard before the bot can run."""
     import sqlite3
     import zipfile
 
@@ -87,14 +87,14 @@ def test_export_strips_owner_secrets(tmp_path):
     conn = open_db(str(db_path))
     init_schema(conn)
     create_or_get_owner(conn, telegram_id=1)
-    conn.execute(
-        "UPDATE owners SET jina_api_key=?, deepgram_api_key=?, openrouter_key=?, "
-        "github_token=?, github_mirror_repo=?, vps_host=?, vps_user=?, "
-        "inbox_chat_id=?, setup_step='done' WHERE telegram_id=1",
-        ("jina-secret", "dg-secret", "or-secret", "ghp-token",
-         "user/repo", "host.example.com", "ubuntu", -100123),
-    )
-    conn.commit()
+    update_owner_field(conn, 1, "jina_api_key", "jina-secret")
+    update_owner_field(conn, 1, "deepgram_api_key", "dg-secret")
+    update_owner_field(conn, 1, "github_token", "ghp-token")
+    update_owner_field(conn, 1, "github_mirror_repo", "user/repo")
+    update_owner_field(conn, 1, "vps_host", "host.example.com")
+    update_owner_field(conn, 1, "vps_user", "ubuntu")
+    update_owner_field(conn, 1, "inbox_chat_id", -100123)
+    update_owner_field(conn, 1, "setup_step", "done")
     conn.close()
 
     out = tmp_path / "export.zip"
@@ -105,20 +105,20 @@ def test_export_strips_owner_secrets(tmp_path):
         z.extract("soroka.db", path=tmp_path / "extracted")
     extracted = sqlite3.connect(tmp_path / "extracted" / "soroka.db")
     try:
+        cols = {r[1] for r in extracted.execute("PRAGMA table_info(owners)")}
         row = extracted.execute(
-            "SELECT jina_api_key, deepgram_api_key, openrouter_key, github_token, "
-            "github_mirror_repo, vps_host, vps_user, inbox_chat_id, setup_step "
+            "SELECT vps_host, vps_user, inbox_chat_id, setup_step "
             "FROM owners WHERE telegram_id=1"
         ).fetchone()
     finally:
         extracted.close()
 
-    (jina, dg, oroute, ghtok, repo, host, user, inbox, step) = row
-    assert jina is None
-    assert dg is None
-    assert oroute is None
-    assert ghtok is None
-    assert repo is None
+    for secret_col in (
+        "jina_api_key", "deepgram_api_key", "openrouter_key",
+        "github_token", "github_mirror_repo",
+    ):
+        assert secret_col not in cols
+    (host, user, inbox, step) = row
     assert host is None
     assert user is None
     assert inbox is None

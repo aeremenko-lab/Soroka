@@ -8,8 +8,7 @@ NoteKind = Literal[
 ]
 
 SetupStep = Literal[
-    "jina", "deepgram", "openrouter", "models",
-    "github", "channel", "done",
+    "jina", "deepgram", "github", "channel", "done",
 ]
 
 
@@ -17,9 +16,6 @@ class Owner(BaseModel):
     telegram_id: int
     jina_api_key: Optional[str] = None
     deepgram_api_key: Optional[str] = None
-    openrouter_key: Optional[str] = None
-    primary_model: Optional[str] = None
-    fallback_model: Optional[str] = None
     github_token: Optional[str] = None
     github_mirror_repo: Optional[str] = None
     vps_host: Optional[str] = None

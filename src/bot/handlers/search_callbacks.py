@@ -24,7 +24,7 @@ from telegram.error import BadRequest
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes
 
 from src.adapters.jina import JinaClient
-from src.adapters.openrouter import OpenRouterClient
+from src.adapters.llm import build_llm_client
 from src.bot.auth import is_owner
 from src.bot.handlers._search_format import format_hit
 from src.core.owners import get_owner
@@ -80,7 +80,7 @@ async def _rebuild_pool_and_render(ctx, state: dict) -> tuple[str, list]:
         return (text, notes)
 
     jina = JinaClient(api_key=owner.jina_api_key)
-    openrouter = OpenRouterClient(api_key=owner.openrouter_key)
+    llm = build_llm_client()
 
     candidates = await hybrid_search(
         conn, jina=jina, owner_id=owner.telegram_id,
@@ -95,8 +95,7 @@ async def _rebuild_pool_and_render(ctx, state: dict) -> tuple[str, list]:
         return ("Больше ничего не нашёл с этими фильтрами.", [])
 
     reranked = await rerank(
-        openrouter, primary=owner.primary_model, fallback=owner.fallback_model,
-        query=state["query"], candidates=candidates, top_k=20,
+        llm, query=state["query"], candidates=candidates, top_k=20,
     )
     if not reranked:
         return ("Не нашёл релевантного.", [])

@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 from src.adapters.jina import JinaClient
-from src.adapters.openrouter import OpenRouterClient
+from src.adapters.llm import LLMClient
 from src.core.db import open_db, init_schema
 from src.core.intent import parse_intent
 from src.core.models import Note
@@ -79,9 +79,7 @@ async def run_query(
     conn: sqlite3.Connection,
     *,
     jina: JinaClient,
-    openrouter: OpenRouterClient,
-    primary_model: str,
-    fallback_model: str | None,
+    llm: LLMClient,
     raw_query: str,
 ) -> list[int]:
     """Take a raw user query and return the ranked top-K note IDs that
@@ -113,8 +111,7 @@ async def run_query(
     if not candidates:
         return []
     reranked = await rerank(
-        openrouter, primary=primary_model, fallback=fallback_model,
-        query=intent.clean_query, candidates=candidates, top_k=TOP_K,
+        llm, query=intent.clean_query, candidates=candidates, top_k=TOP_K,
     )
     return [n.id for n in reranked[:TOP_K]]
 
@@ -122,16 +119,13 @@ async def run_query(
 async def run_all(
     *,
     jina_key: str,
-    openrouter_key: str,
-    primary_model: str,
-    fallback_model: str | None,
+    llm: LLMClient,
     queries_subset: list[dict] | None = None,
 ) -> tuple[list[dict], dict[str, int]]:
     """Bootstrap a fresh DB, run all (or a subset of) queries, return
     per-query result dicts ready for metrics.aggregate(). Each result
     dict has: q, tag, expected_ids, predicted_ids."""
     jina = JinaClient(api_key=jina_key)
-    openrouter = OpenRouterClient(api_key=openrouter_key)
 
     print(f"bootstrapping fixture DB with {len(NOTES)} notes...")
     conn, db_path, key_to_id = await bootstrap_db(jina)
@@ -145,9 +139,7 @@ async def run_all(
         try:
             predicted = await run_query(
                 conn,
-                jina=jina, openrouter=openrouter,
-                primary_model=primary_model, fallback_model=fallback_model,
-                raw_query=q["q"],
+                jina=jina, llm=llm, raw_query=q["q"],
             )
         except Exception as e:
             logger.exception("query failed: %s", q["q"])

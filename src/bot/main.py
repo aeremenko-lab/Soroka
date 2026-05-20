@@ -15,6 +15,7 @@ from src.core.export import build_export
 from src.core.owners import (
     create_or_get_owner, get_owner, record_backup_failure,
     record_backup_success, reset_backup_failure_count, seed_vps_from_env,
+    migrate_owner_secrets_to_env,
 )
 from src.core.settings import load_settings
 from src.bot.handlers.commands import register_command_handlers
@@ -42,7 +43,6 @@ BOT_MENU_COMMANDS = [
     BotCommand("stats", "Статистика по заметкам"),
     BotCommand("mcp", "Конфиг для MCP-сервера"),
     BotCommand("export", "Скачать архив базы"),
-    BotCommand("models", "Сменить AI-модели"),
     BotCommand("sync", "Проверить удалённые сообщения"),
     BotCommand("reset", "Сбросить состояние диалога"),
 ]
@@ -194,6 +194,7 @@ def main():
     conn = open_db(settings.db_path)
     init_schema(conn)
     create_or_get_owner(conn, telegram_id=settings.owner_telegram_id)
+    migrate_owner_secrets_to_env(conn, settings.owner_telegram_id)
     seed_vps_from_env(conn, settings.owner_telegram_id)
     app = build_app(settings, conn)
     app.run_polling(allowed_updates=ALLOWED_UPDATES)

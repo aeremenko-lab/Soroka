@@ -37,7 +37,7 @@ def test_extracts_array_after_explanation():
 
 
 def test_none_raises():
-    """openrouter.complete sometimes returns None when a model refuses."""
+    """LLM providers may return None-like content when a model refuses."""
     with pytest.raises(ValueError, match="None"):
         parse_loose_json(None)
 

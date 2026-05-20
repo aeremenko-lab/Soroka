@@ -690,7 +690,7 @@ async def test_ingest_text_user_text_is_never_thin(tmp_path):
 @pytest.mark.asyncio
 async def test_ingest_url_generates_ru_summary_for_foreign_extract(tmp_path, monkeypatch):
     """English-language extracted body triggers a Russian summary via
-    OpenRouter; the summary is saved on the Note and concatenated into
+    the configured LLM; the summary is saved on the Note and concatenated into
     the embedding text."""
     conn = open_db(str(tmp_path / "x.db"))
     init_schema(conn)
@@ -705,18 +705,18 @@ async def test_ingest_url_generates_ru_summary_for_foreign_extract(tmp_path, mon
 
     fake_jina = AsyncMock()
     fake_jina.embed = AsyncMock(return_value=[0.0] * 1024)
-    fake_or = AsyncMock()
-    fake_or.complete = AsyncMock(return_value="Статья про LLM и инженерию.")
+    fake_llm = AsyncMock()
+    fake_llm.complete = AsyncMock(return_value="Статья про LLM и инженерию.")
 
     note_id = await ingest_text(
         conn, jina=fake_jina, owner_id=1,
         tg_chat_id=-1, tg_message_id=100,
         text="https://example.com/llm", caption=None, created_at=1,
-        openrouter=fake_or, primary_model="m1", fallback_model="m2",
+        llm=fake_llm,
     )
     n = get_note(conn, note_id)
     assert n.ru_summary == "Статья про LLM и инженерию."
-    fake_or.complete.assert_awaited_once()
+    fake_llm.complete.assert_awaited_once()
     # Embedding text contains the summary so RU queries hit the dense index.
     embed_arg = fake_jina.embed.call_args.args[0]
     assert "Статья про LLM и инженерию." in embed_arg
@@ -737,18 +737,18 @@ async def test_ingest_url_skips_summary_for_russian_extract(tmp_path, monkeypatc
 
     fake_jina = AsyncMock()
     fake_jina.embed = AsyncMock(return_value=[0.0] * 1024)
-    fake_or = AsyncMock()
-    fake_or.complete = AsyncMock(return_value="should not be called")
+    fake_llm = AsyncMock()
+    fake_llm.complete = AsyncMock(return_value="should not be called")
 
     note_id = await ingest_text(
         conn, jina=fake_jina, owner_id=1,
         tg_chat_id=-1, tg_message_id=101,
         text="https://example.com/ru", caption=None, created_at=1,
-        openrouter=fake_or, primary_model="m1", fallback_model="m2",
+        llm=fake_llm,
     )
     n = get_note(conn, note_id)
     assert n.ru_summary is None
-    fake_or.complete.assert_not_called()
+    fake_llm.complete.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -767,14 +767,14 @@ async def test_ingest_url_survives_summary_llm_failure(tmp_path, monkeypatch):
 
     fake_jina = AsyncMock()
     fake_jina.embed = AsyncMock(return_value=[0.0] * 1024)
-    fake_or = AsyncMock()
-    fake_or.complete = AsyncMock(side_effect=Exception("openrouter down"))
+    fake_llm = AsyncMock()
+    fake_llm.complete = AsyncMock(side_effect=Exception("LLM down"))
 
     note_id = await ingest_text(
         conn, jina=fake_jina, owner_id=1,
         tg_chat_id=-1, tg_message_id=102,
         text="https://example.com/en", caption=None, created_at=1,
-        openrouter=fake_or, primary_model="m1", fallback_model="m2",
+        llm=fake_llm,
     )
     assert note_id is not None
     n = get_note(conn, note_id)
@@ -784,9 +784,8 @@ async def test_ingest_url_survives_summary_llm_failure(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_ingest_url_skips_summary_when_no_openrouter(tmp_path, monkeypatch):
-    """Backwards-compat: callers that don't pass an openrouter client
-    skip summarisation entirely (existing tests exercise this path)."""
+async def test_ingest_url_skips_summary_when_no_llm(tmp_path, monkeypatch):
+    """Callers that don't pass an LLM client skip summarisation entirely."""
     conn = open_db(str(tmp_path / "x.db"))
     init_schema(conn)
     create_or_get_owner(conn, telegram_id=1)
@@ -812,7 +811,7 @@ async def test_ingest_url_skips_summary_when_no_openrouter(tmp_path, monkeypatch
 @pytest.mark.asyncio
 async def test_ingest_url_edit_reuses_summary_when_url_unchanged(tmp_path, monkeypatch):
     """Caption-only edit of a foreign URL reuses the existing ru_summary
-    and does NOT re-bill OpenRouter — the cached summary is identical
+    and does NOT call the LLM again — the cached summary is identical
     to what the LLM would return again."""
     conn = open_db(str(tmp_path / "x.db"))
     init_schema(conn)
@@ -826,27 +825,27 @@ async def test_ingest_url_edit_reuses_summary_when_url_unchanged(tmp_path, monke
 
     fake_jina = AsyncMock()
     fake_jina.embed = AsyncMock(return_value=[0.0] * 1024)
-    fake_or = AsyncMock()
-    fake_or.complete = AsyncMock(return_value="Первая сводка.")
+    fake_llm = AsyncMock()
+    fake_llm.complete = AsyncMock(return_value="Первая сводка.")
 
     first = await ingest_text(
         conn, jina=fake_jina, owner_id=1,
         tg_chat_id=-1, tg_message_id=104,
         text="https://example.com/edit", caption=None, created_at=1,
-        openrouter=fake_or, primary_model="m1", fallback_model="m2",
+        llm=fake_llm,
     )
     second = await ingest_text(
         conn, jina=fake_jina, owner_id=1,
         tg_chat_id=-1, tg_message_id=104,
         text="https://example.com/edit", caption="фикс опечатки", created_at=1,
         is_edit=True,
-        openrouter=fake_or, primary_model="m1", fallback_model="m2",
+        llm=fake_llm,
     )
     assert second == first
     n = get_note(conn, first)
     assert n.ru_summary == "Первая сводка."
     # LLM was called exactly once — second pass hit the cache.
-    assert fake_or.complete.await_count == 1
+    assert fake_llm.complete.await_count == 1
 
 
 @pytest.mark.asyncio
@@ -866,19 +865,19 @@ async def test_ingest_youtube_generates_ru_summary_for_foreign_extract(tmp_path,
 
     fake_jina = AsyncMock()
     fake_jina.embed = AsyncMock(return_value=[0.0] * 1024)
-    fake_or = AsyncMock()
-    fake_or.complete = AsyncMock(return_value="Видео про создание AI-агентов.")
+    fake_llm = AsyncMock()
+    fake_llm.complete = AsyncMock(return_value="Видео про создание AI-агентов.")
 
     note_id = await ingest_text(
         conn, jina=fake_jina, owner_id=1,
         tg_chat_id=-1, tg_message_id=200,
         text="https://youtu.be/abc123", caption=None, created_at=1,
-        openrouter=fake_or, primary_model="m1", fallback_model="m2",
+        llm=fake_llm,
     )
     n = get_note(conn, note_id)
     assert n.kind == "youtube"
     assert n.ru_summary == "Видео про создание AI-агентов."
-    fake_or.complete.assert_awaited_once()
+    fake_llm.complete.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -897,22 +896,22 @@ async def test_ingest_url_edit_resummarizes_when_url_changes(tmp_path, monkeypat
 
     fake_jina = AsyncMock()
     fake_jina.embed = AsyncMock(return_value=[0.0] * 1024)
-    fake_or = AsyncMock()
-    fake_or.complete = AsyncMock(side_effect=["Первая сводка.", "Вторая сводка."])
+    fake_llm = AsyncMock()
+    fake_llm.complete = AsyncMock(side_effect=["Первая сводка.", "Вторая сводка."])
 
     first = await ingest_text(
         conn, jina=fake_jina, owner_id=1,
         tg_chat_id=-1, tg_message_id=104,
         text="https://example.com/a", caption=None, created_at=1,
-        openrouter=fake_or, primary_model="m1", fallback_model="m2",
+        llm=fake_llm,
     )
     await ingest_text(
         conn, jina=fake_jina, owner_id=1,
         tg_chat_id=-1, tg_message_id=104,
         text="https://example.com/b", caption=None, created_at=1,
         is_edit=True,
-        openrouter=fake_or, primary_model="m1", fallback_model="m2",
+        llm=fake_llm,
     )
     n = get_note(conn, first)
     assert n.ru_summary == "Вторая сводка."
-    assert fake_or.complete.await_count == 2
+    assert fake_llm.complete.await_count == 2

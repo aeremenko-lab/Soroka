@@ -19,16 +19,15 @@ def test_init_schema_is_idempotent(tmp_path):
     init_schema(conn)
     init_schema(conn)  # second call must not raise
 
-def test_owners_table_allows_null_keys(tmp_path):
+def test_owners_table_does_not_store_env_backed_columns(tmp_path):
     conn = open_db(str(tmp_path / "soroka.db"))
     init_schema(conn)
-    conn.execute(
-        "INSERT INTO owners (telegram_id, created_at) VALUES (?, ?)",
-        (1, 1700000000),
-    )
-    conn.commit()
-    row = conn.execute("SELECT jina_api_key FROM owners").fetchone()
-    assert row[0] is None
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(owners)").fetchall()}
+    assert "jina_api_key" not in cols
+    assert "deepgram_api_key" not in cols
+    assert "openrouter_key" not in cols
+    assert "github_token" not in cols
+    assert "github_mirror_repo" not in cols
 
 
 def test_init_schema_adds_thin_content_and_deleted_at(tmp_path):

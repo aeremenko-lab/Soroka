@@ -110,9 +110,9 @@ async def test_rerank_orders_by_llm_response(tmp_path):
     conn = _seed(tmp_path)
     fake_jina = AsyncMock()
     fake_jina.embed = AsyncMock(return_value=[1.0, 0.0] + [0.0] * 1022)
-    fake_or = AsyncMock()
+    fake_llm = AsyncMock()
     # LLM returns a JSON list of ids in best-first order
-    fake_or.complete = AsyncMock(return_value="[3, 1]")
+    fake_llm.complete = AsyncMock(return_value="[3, 1]")
 
     from src.core.search import rerank, hybrid_search
     candidates = await hybrid_search(
@@ -120,8 +120,7 @@ async def test_rerank_orders_by_llm_response(tmp_path):
         clean_query="tuna", kind=None, limit=5,
     )
     reranked = await rerank(
-        fake_or, primary="x", fallback="y",
-        query="tuna sushi", candidates=candidates, top_k=2,
+        fake_llm, query="tuna sushi", candidates=candidates, top_k=2,
     )
     assert [n.id for n in reranked] == [3, 1]
 
@@ -145,15 +144,15 @@ async def test_rerank_prompt_includes_ru_summary_when_present():
 
     captured: dict = {}
 
-    async def fake_complete(*, primary, fallback, messages, max_tokens, **_):
+    async def fake_complete(*, messages, max_tokens, **_):
         captured["content"] = messages[0]["content"]
         return "[10]"
 
-    fake_or = AsyncMock()
-    fake_or.complete = fake_complete
+    fake_llm = AsyncMock()
+    fake_llm.complete = fake_complete
 
-    await rerank(fake_or, primary="x", fallback="y",
-                  query="языковые модели", candidates=candidates, top_k=5)
+    await rerank(fake_llm, query="языковые модели",
+                  candidates=candidates, top_k=5)
 
     assert "Статья про языковые модели." in captured["content"]
     assert "[ru-кратко]" in captured["content"]
@@ -177,32 +176,30 @@ async def test_rerank_prompt_omits_ru_marker_when_summary_absent():
 
     captured: dict = {}
 
-    async def fake_complete(*, primary, fallback, messages, max_tokens, **_):
+    async def fake_complete(*, messages, max_tokens, **_):
         captured["content"] = messages[0]["content"]
         return "[11]"
 
-    fake_or = AsyncMock()
-    fake_or.complete = fake_complete
+    fake_llm = AsyncMock()
+    fake_llm.complete = fake_complete
 
-    await rerank(fake_or, primary="x", fallback="y",
-                  query="что-то", candidates=candidates, top_k=5)
+    await rerank(fake_llm, query="что-то", candidates=candidates, top_k=5)
 
     assert "[ru-кратко]" not in captured["content"]
 
 
 @pytest.mark.asyncio
-async def test_rerank_disables_reasoning_via_extra_body():
+async def test_rerank_uses_small_completion_budget():
     from src.core.models import Note
     from src.core.search import rerank
 
-    fake_or = AsyncMock()
-    fake_or.complete = AsyncMock(return_value="[1]")
+    fake_llm = AsyncMock()
+    fake_llm.complete = AsyncMock(return_value="[1]")
     candidates = [Note(id=1, owner_id=1, tg_chat_id=-1, tg_message_id=1,
                        kind="text", content="x", created_at=1)]
-    await rerank(fake_or, primary="x", fallback="y",
-                  query="q", candidates=candidates, top_k=1)
-    kwargs = fake_or.complete.call_args.kwargs
-    assert kwargs["extra_body"] == {"reasoning": {"enabled": False}}
+    await rerank(fake_llm, query="q", candidates=candidates, top_k=1)
+    kwargs = fake_llm.complete.call_args.kwargs
+    assert kwargs["max_tokens"] == 200
 
 
 # ---------------------------------------------------------------------------

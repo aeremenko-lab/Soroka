@@ -271,10 +271,12 @@ RERANK_PROMPT = """Ты — реранкер результатов поиска
 """
 
 
-async def rerank(openrouter, primary: str, fallback: Optional[str],
-                 query: str, candidates: list[Note], top_k: int = 5) -> list[Note]:
+async def rerank(llm, query: str, candidates: list[Note],
+                 top_k: int = 5) -> list[Note]:
     if not candidates:
         return []
+    if llm is None:
+        return candidates[:top_k]
 
     # Include ru_summary alongside title/content so the LLM can match
     # Russian queries against foreign-language captures (the dense index
@@ -284,13 +286,11 @@ async def rerank(openrouter, primary: str, fallback: Optional[str],
         _format_rerank_block(n) for n in candidates
     )
     try:
-        raw = await openrouter.complete(
-            primary=primary, fallback=fallback,
+        raw = await llm.complete(
             messages=[{"role": "user", "content": RERANK_PROMPT.format(
                 query=query, candidates=blocks, top_k=top_k,
             )}],
             max_tokens=200,
-            extra_body={"reasoning": {"enabled": False}},
         )
         ids = parse_loose_json(raw)
         if not isinstance(ids, list):

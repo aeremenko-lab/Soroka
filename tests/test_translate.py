@@ -42,25 +42,16 @@ def test_is_russian_false_when_english_with_a_few_russian_words():
 # ---------- summarize_ru ----------
 
 @pytest.mark.asyncio
-async def test_summarize_ru_returns_none_when_openrouter_is_none():
-    out = await summarize_ru(None, primary="x", fallback="y", text="hello world")
+async def test_summarize_ru_returns_none_when_llm_is_none():
+    out = await summarize_ru(None, text="hello world")
     assert out is None
-
-
-@pytest.mark.asyncio
-async def test_summarize_ru_returns_none_when_primary_empty():
-    fake = AsyncMock()
-    fake.complete = AsyncMock(return_value="ok")
-    out = await summarize_ru(fake, primary="", fallback=None, text="hello")
-    assert out is None
-    fake.complete.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_summarize_ru_returns_none_for_empty_text():
     fake = AsyncMock()
     fake.complete = AsyncMock(return_value="ok")
-    out = await summarize_ru(fake, primary="x", fallback="y", text="   ")
+    out = await summarize_ru(fake, text="   ")
     assert out is None
     fake.complete.assert_not_called()
 
@@ -69,16 +60,26 @@ async def test_summarize_ru_returns_none_for_empty_text():
 async def test_summarize_ru_returns_cleaned_text_on_success():
     fake = AsyncMock()
     fake.complete = AsyncMock(return_value="  Краткое описание статьи о нейросетях.  ")
-    out = await summarize_ru(fake, primary="x", fallback="y",
-                              text="some english article body")
+    out = await summarize_ru(fake, text="some english article body")
     assert out == "Краткое описание статьи о нейросетях."
+
+
+@pytest.mark.asyncio
+async def test_summarize_ru_passes_messages_and_token_budget_to_llm():
+    fake = AsyncMock()
+    fake.complete = AsyncMock(return_value="ok")
+    await summarize_ru(fake, text="body")
+    kwargs = fake.complete.call_args.kwargs
+    assert kwargs["max_tokens"] == 120
+    assert kwargs["messages"][0]["role"] == "user"
+    assert "body" in kwargs["messages"][0]["content"]
 
 
 @pytest.mark.asyncio
 async def test_summarize_ru_strips_matched_quotes():
     fake = AsyncMock()
     fake.complete = AsyncMock(return_value='"Описание в кавычках"')
-    out = await summarize_ru(fake, primary="x", fallback="y", text="body")
+    out = await summarize_ru(fake, text="body")
     assert out == "Описание в кавычках"
 
 
@@ -88,7 +89,7 @@ async def test_summarize_ru_strips_russian_guillemets():
     The guillemet branch handles them explicitly."""
     fake = AsyncMock()
     fake.complete = AsyncMock(return_value="«Описание в ёлочках»")
-    out = await summarize_ru(fake, primary="x", fallback="y", text="body")
+    out = await summarize_ru(fake, text="body")
     assert out == "Описание в ёлочках"
 
 
@@ -96,8 +97,7 @@ async def test_summarize_ru_strips_russian_guillemets():
 async def test_summarize_ru_truncates_overlong_responses():
     fake = AsyncMock()
     fake.complete = AsyncMock(return_value="A" * 500)
-    out = await summarize_ru(fake, primary="x", fallback="y", text="body",
-                              max_chars=200)
+    out = await summarize_ru(fake, text="body", max_chars=200)
     assert out is not None
     assert len(out) <= 200  # ellipsis included in the cap
     assert out.endswith("…")
@@ -106,8 +106,8 @@ async def test_summarize_ru_truncates_overlong_responses():
 @pytest.mark.asyncio
 async def test_summarize_ru_returns_none_on_llm_exception():
     fake = AsyncMock()
-    fake.complete = AsyncMock(side_effect=Exception("openrouter down"))
-    out = await summarize_ru(fake, primary="x", fallback="y", text="body")
+    fake.complete = AsyncMock(side_effect=Exception("LLM down"))
+    out = await summarize_ru(fake, text="body")
     assert out is None
 
 
@@ -115,27 +115,5 @@ async def test_summarize_ru_returns_none_on_llm_exception():
 async def test_summarize_ru_returns_none_on_blank_llm_response():
     fake = AsyncMock()
     fake.complete = AsyncMock(return_value="   ")
-    out = await summarize_ru(fake, primary="x", fallback="y", text="body")
+    out = await summarize_ru(fake, text="body")
     assert out is None
-
-
-@pytest.mark.asyncio
-async def test_summarize_ru_passes_primary_and_fallback_to_openrouter():
-    fake = AsyncMock()
-    fake.complete = AsyncMock(return_value="ok")
-    await summarize_ru(fake, primary="m1", fallback="m2", text="body")
-    kwargs = fake.complete.call_args.kwargs
-    assert kwargs["primary"] == "m1"
-    assert kwargs["fallback"] == "m2"
-
-
-@pytest.mark.asyncio
-async def test_summarize_ru_disables_reasoning_via_extra_body():
-    """Reasoning-only models silently consume max_tokens on hidden reasoning,
-    leaving content empty. Always pass reasoning.enabled=false so hybrid
-    models stay fast and pure non-reasoning models ignore the field."""
-    fake = AsyncMock()
-    fake.complete = AsyncMock(return_value="ok")
-    await summarize_ru(fake, primary="m1", fallback="m2", text="body")
-    kwargs = fake.complete.call_args.kwargs
-    assert kwargs["extra_body"] == {"reasoning": {"enabled": False}}

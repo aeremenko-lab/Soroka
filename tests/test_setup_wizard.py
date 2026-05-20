@@ -5,7 +5,9 @@ from unittest.mock import AsyncMock, patch
 
 from src.core.db import open_db, init_schema
 from src.core.owners import create_or_get_owner, get_owner
-from src.bot.handlers.setup import process_setup_message, register_setup_handlers
+from src.bot.handlers.setup import (
+    process_setup_message, prompt_for_step, register_setup_handlers,
+)
 
 @pytest.mark.asyncio
 async def test_jina_step_accepts_valid_key(tmp_path):
@@ -39,6 +41,65 @@ async def test_jina_step_rejects_invalid_key(tmp_path):
     assert "не подошёл" in msg.lower() or "invalid" in msg.lower()
     assert get_owner(conn, 1).jina_api_key is None
     assert get_owner(conn, 1).setup_step == "jina"
+
+
+@pytest.mark.asyncio
+async def test_jina_step_keeps_env_key_on_blank_input(tmp_path):
+    conn = open_db(str(tmp_path / "x.db"))
+    init_schema(conn)
+    create_or_get_owner(conn, telegram_id=1)
+    from src.core.owners import advance_setup_step, update_owner_field
+    advance_setup_step(conn, 1, "jina")
+    update_owner_field(conn, 1, "jina_api_key", "jina-from-env")
+
+    prompt = prompt_for_step(conn, 1, "jina")
+    assert "уже есть" in prompt
+    assert "…-env" in prompt
+
+    with patch("src.bot.handlers.setup.JinaClient") as mock_cls:
+        mock_cls.return_value.validate_key = AsyncMock(return_value=True)
+        next_prompt = await process_setup_message(conn, owner_id=1, text="")
+
+    mock_cls.assert_called_once_with(api_key="jina-from-env")
+    assert get_owner(conn, 1).jina_api_key == "jina-from-env"
+    assert get_owner(conn, 1).setup_step == "deepgram"
+    assert "Deepgram" in next_prompt
+
+
+@pytest.mark.asyncio
+async def test_jina_step_replaces_env_key_when_new_value_sent(tmp_path):
+    conn = open_db(str(tmp_path / "x.db"))
+    init_schema(conn)
+    create_or_get_owner(conn, telegram_id=1)
+    from src.core.owners import advance_setup_step, update_owner_field
+    advance_setup_step(conn, 1, "jina")
+    update_owner_field(conn, 1, "jina_api_key", "old-jina")
+
+    with patch("src.bot.handlers.setup.JinaClient") as mock_cls:
+        mock_cls.return_value.validate_key = AsyncMock(return_value=True)
+        await process_setup_message(conn, owner_id=1, text="new-jina")
+
+    mock_cls.assert_called_once_with(api_key="new-jina")
+    assert get_owner(conn, 1).jina_api_key == "new-jina"
+
+
+@pytest.mark.asyncio
+async def test_deepgram_step_keeps_env_key_on_dot(tmp_path):
+    conn = open_db(str(tmp_path / "x.db"))
+    init_schema(conn)
+    create_or_get_owner(conn, telegram_id=1)
+    from src.core.owners import advance_setup_step, update_owner_field
+    advance_setup_step(conn, 1, "deepgram")
+    update_owner_field(conn, 1, "deepgram_api_key", "dg-from-env")
+
+    with patch("src.bot.handlers.setup.DeepgramClient") as mock_cls:
+        mock_cls.return_value.validate_key = AsyncMock(return_value=True)
+        next_prompt = await process_setup_message(conn, owner_id=1, text=".")
+
+    mock_cls.assert_called_once_with(api_key="dg-from-env")
+    assert get_owner(conn, 1).deepgram_api_key == "dg-from-env"
+    assert get_owner(conn, 1).setup_step == "github"
+    assert "GitHub" in next_prompt
 
 
 def test_setup_handler_dispatches_private_text():
@@ -76,7 +137,7 @@ def test_setup_handler_dispatches_private_text():
 @pytest.mark.asyncio
 async def test_github_step_records_repo_then_asks_for_token(tmp_path):
     """First substep: 'username/repo' is saved into github_mirror_repo,
-    response prompts for the token (5b)."""
+    response prompts for the token (3b)."""
     from src.core.owners import advance_setup_step
     from src.bot.handlers.setup_github import handle_github_step
 
@@ -87,10 +148,31 @@ async def test_github_step_records_repo_then_asks_for_token(tmp_path):
 
     reply = await handle_github_step(conn, 1, "andyshaman/soroka-data")
 
-    assert "5b" in reply or "токен" in reply.lower() or "token" in reply.lower()
+    assert "3b" in reply or "токен" in reply.lower() or "token" in reply.lower()
     assert get_owner(conn, 1).github_mirror_repo == "andyshaman/soroka-data"
     assert get_owner(conn, 1).github_token is None
     assert get_owner(conn, 1).setup_step == "github"
+
+
+@pytest.mark.asyncio
+async def test_github_step_accepts_clone_url(tmp_path):
+    from src.core.owners import advance_setup_step
+    from src.bot.handlers.setup_github import handle_github_step
+
+    conn = open_db(str(tmp_path / "x.db"))
+    init_schema(conn)
+    create_or_get_owner(conn, telegram_id=1)
+    advance_setup_step(conn, 1, "github")
+
+    await handle_github_step(
+        conn, 1,
+        "https://github.com/aeremenko-lab/soroka-backup-repo.git",
+    )
+
+    assert (
+        get_owner(conn, 1).github_mirror_repo
+        == "aeremenko-lab/soroka-backup-repo"
+    )
 
 
 @pytest.mark.asyncio
@@ -128,6 +210,33 @@ async def test_github_step_validates_token_and_advances(tmp_path):
 
     assert "подключено" in reply.lower() or "channel" in reply.lower() or "канал" in reply.lower()
     assert get_owner(conn, 1).github_token == "ghp_realToken123"
+    assert get_owner(conn, 1).setup_step == "channel"
+
+
+@pytest.mark.asyncio
+async def test_github_step_keeps_env_repo_and_token_on_blank_input(tmp_path):
+    from src.core.owners import advance_setup_step, update_owner_field
+    from src.bot.handlers.setup_github import handle_github_step
+
+    conn = open_db(str(tmp_path / "x.db"))
+    init_schema(conn)
+    create_or_get_owner(conn, telegram_id=1)
+    advance_setup_step(conn, 1, "github")
+    update_owner_field(conn, 1, "github_mirror_repo", "andyshaman/soroka-data")
+    update_owner_field(conn, 1, "github_token", "github_pat_existing")
+
+    prompt = prompt_for_step(conn, 1, "github")
+    assert "andyshaman/soroka-data" in prompt
+    assert "…ting" in prompt
+
+    with patch("src.bot.handlers.setup_github.GitHubMirror") as mock_cls:
+        mock_cls.return_value.validate = AsyncMock(return_value=None)
+        reply = await handle_github_step(conn, 1, "")
+
+    mock_cls.assert_called_once_with(
+        token="github_pat_existing", repo="andyshaman/soroka-data",
+    )
+    assert "подключено" in reply.lower()
     assert get_owner(conn, 1).setup_step == "channel"
 
 

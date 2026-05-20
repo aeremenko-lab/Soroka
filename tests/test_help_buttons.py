@@ -26,14 +26,13 @@ def _callback(data: str):
     return update
 
 
-def test_help_keyboard_has_seven_buttons():
+def test_help_keyboard_has_six_buttons():
     kb = build_help_keyboard()
     flat = [b for row in kb.inline_keyboard for b in row]
-    assert len(flat) == 7
+    assert len(flat) == 6
     payloads = [b.callback_data for b in flat]
     assert "help:set_jina" in payloads
     assert "help:set_deepgram" in payloads
-    assert "help:set_openrouter" in payloads
     assert "help:set_github" in payloads
     assert "help:set_vps" in payloads
     assert "help:set_inbox" in payloads

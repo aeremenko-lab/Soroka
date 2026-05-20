@@ -8,7 +8,7 @@ from telegram.ext import Application, MessageHandler, ContextTypes, filters
 
 from src.adapters.deepgram import DeepgramClient
 from src.adapters.jina import JinaClient
-from src.adapters.openrouter import OpenRouterClient
+from src.adapters.llm import build_llm_client
 from src.adapters.tg_files import is_oversized
 from src.bot.handlers import media_group
 from src.bot.handlers.reactions import (
@@ -177,23 +177,15 @@ async def _route_and_ingest(ctx, conn, owner, msg, *, is_edit: bool = False) -> 
 
     if kind in ("text", "web", "youtube"):
         text = msg.text or msg.caption or ""
-        # Build the OpenRouter client only when summarisation is even
-        # possible: the owner has a key and a primary model. ingest_text
-        # treats openrouter=None as "skip RU summary", so plain text and
-        # under-configured owners just pass through unchanged.
-        openrouter = (
-            OpenRouterClient(api_key=owner.openrouter_key)
-            if owner.openrouter_key and owner.primary_model
-            else None
-        )
+        # LLM is optional: without SOROKA_LLM_MODEL + provider key in .env,
+        # URL summaries are skipped and ingest still succeeds.
+        llm = build_llm_client()
         return await ingest_text(
             conn, jina=jina, owner_id=owner.telegram_id,
             tg_chat_id=msg.chat.id, tg_message_id=msg.message_id,
             text=text, caption=msg.caption, created_at=int(msg.date.timestamp()),
             is_edit=is_edit,
-            openrouter=openrouter,
-            primary_model=owner.primary_model,
-            fallback_model=owner.fallback_model,
+            llm=llm,
         )
 
     if kind == "voice":

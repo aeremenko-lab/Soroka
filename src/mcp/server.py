@@ -11,13 +11,14 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
 from src.adapters.jina import JinaClient
-from src.adapters.openrouter import OpenRouterClient
+from src.adapters.llm import build_llm_client
 from src.core.db import open_db, init_schema
+from src.core.env_store import load_env_file
 from src.core.intent import parse_intent
 from src.core.links import message_link
 from src.core.neighbors import find_similar, get_context, get_by_ids
 from src.core.notes import get_note, list_recent_notes
-from src.core.owners import get_owner
+from src.core.owners import get_owner, migrate_owner_secrets_to_env
 from src.core.search import hybrid_search, list_by_filters, rerank
 from src.core.stats import compute_stats
 from src.core.attachments import list_attachments
@@ -84,7 +85,7 @@ async def tool_search(conn: sqlite3.Connection, owner_id: int,
     shouldn't have their filters second-guessed."""
     owner = get_owner(conn, owner_id)
     jina = JinaClient(api_key=owner.jina_api_key)
-    openrouter = OpenRouterClient(api_key=owner.openrouter_key)
+    llm = build_llm_client()
 
     intent = parse_intent(query, tz=_owner_tz())
     eff_kind = kind if kind is not None else intent.kind
@@ -130,8 +131,7 @@ async def tool_search(conn: sqlite3.Connection, owner_id: int,
         created_after=eff_created_after, created_before=eff_created_before,
     )
     reranked = await rerank(
-        openrouter, primary=owner.primary_model, fallback=owner.fallback_model,
-        query=clean_query, candidates=candidates, top_k=limit,
+        llm, query=clean_query, candidates=candidates, top_k=limit,
     )
     return [{
         "id": n.id, "kind": n.kind, "title": n.title,
@@ -353,9 +353,11 @@ def _server(conn: sqlite3.Connection, owner_id: int) -> Server:
 
 async def _main_async():
     import os
+    load_env_file(override=True)
     owner_id = int(os.environ["OWNER_TELEGRAM_ID"])
     conn = open_db(str(DB_PATH))
     init_schema(conn)
+    migrate_owner_secrets_to_env(conn, owner_id)
     server = _server(conn, owner_id)
     async with stdio_server() as (read, write):
         await server.run(read, write, server.create_initialization_options())

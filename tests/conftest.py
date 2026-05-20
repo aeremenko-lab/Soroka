@@ -1,7 +1,16 @@
 import pytest
 from pathlib import Path
 
+from src.core.env_store import CONFIG_ENV_NAMES, SECRET_ENV_NAMES
+
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture(autouse=True)
+def isolate_runtime_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("SOROKA_ENV_PATH", str(tmp_path / ".env"))
+    for name in SECRET_ENV_NAMES + CONFIG_ENV_NAMES:
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture(scope="session", autouse=True)

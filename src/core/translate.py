@@ -60,30 +60,24 @@ _PROMPT_BODY_CHARS = 4000
 _DEFAULT_MAX_CHARS = 200
 
 
-async def summarize_ru(openrouter, primary: str, fallback: Optional[str],
-                       text: str, *, max_chars: int = _DEFAULT_MAX_CHARS,
+async def summarize_ru(llm, text: str, *, max_chars: int = _DEFAULT_MAX_CHARS,
                        ) -> Optional[str]:
-    """Generate a short Russian summary of `text` via OpenRouter.
+    """Generate a short Russian summary of `text` via the configured LLM.
 
-    Returns None if `openrouter` is None, the input is empty, or the
+    Returns None if `llm` is None, the input is empty, or the
     LLM call fails for any reason. Callers must treat the result as
     optional and proceed without it on None.
     """
-    if openrouter is None or not primary:
+    if llm is None:
         return None
     if not text or not text.strip():
         return None
 
     sample = text[:_PROMPT_BODY_CHARS]
     try:
-        # `reasoning.enabled=false` keeps hybrid models (GLM-4.5, qwen-thinking,
-        # gpt-oss-with-effort) from spending the output budget on hidden
-        # reasoning tokens. Pure non-reasoning models ignore the field.
-        raw = await openrouter.complete(
-            primary=primary, fallback=fallback,
+        raw = await llm.complete(
             messages=[{"role": "user", "content": _SUMMARY_PROMPT + sample}],
             max_tokens=120,
-            extra_body={"reasoning": {"enabled": False}},
         )
     except Exception as e:
         logger.warning("ru_summary failed (%s); skipping", e)

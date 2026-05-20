@@ -44,8 +44,9 @@ def test_golden_yaml_parses(tmp_path):
         "- query: 'тест'\n"
         "  expected_ids: [1, 2]\n"
         "- query: 'другой'\n"
-        "  expected_ids: [5]\n"
+        "  expected_ids: [5]\n",
+        encoding="utf-8",
     )
-    cases = yaml.safe_load(yml.read_text())
+    cases = yaml.safe_load(yml.read_text(encoding="utf-8"))
     assert len(cases) == 2
     assert cases[0]["query"] == "тест"

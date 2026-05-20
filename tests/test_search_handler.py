@@ -32,7 +32,6 @@ async def test_search_handler_caches_reranked_pool_of_20(monkeypatch):
     ctx.bot.send_chat_action = AsyncMock()
 
     owner = MagicMock(setup_step="done", telegram_id=1, jina_api_key="k",
-                     openrouter_key="k", primary_model="m", fallback_model=None,
                      deepgram_api_key="k")
     monkeypatch.setattr("src.bot.handlers.search.get_owner", lambda *a, **kw: owner)
     monkeypatch.setattr("src.bot.handlers.search.is_owner", lambda *a, **kw: True)
@@ -46,6 +45,8 @@ async def test_search_handler_caches_reranked_pool_of_20(monkeypatch):
                         AsyncMock(return_value=pool))
     rerank_mock = AsyncMock(return_value=pool)
     monkeypatch.setattr("src.bot.handlers.search.rerank", rerank_mock)
+    monkeypatch.setattr("src.bot.handlers.search.build_llm_client",
+                        lambda: MagicMock())
     update.message.reply_text = AsyncMock()
 
     await search_handler(update, ctx)

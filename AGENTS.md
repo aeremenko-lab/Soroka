@@ -11,7 +11,7 @@ Ask the user for these (and only these) before doing anything else:
 - `TELEGRAM_BOT_TOKEN`— from @BotFather
 - `OWNER_TELEGRAM_ID` — from @userinfobot
 
-DO NOT ask the user for any other keys (Jina, Deepgram, OpenRouter, GitHub).
+DO NOT ask the user for any other keys (Jina, Deepgram, GitHub).
 Those are collected later via the bot's `/start` wizard, in Telegram.
 
 If `ssh "$VPS" 'echo ok'` fails (password prompt or permission denied), stop
@@ -47,8 +47,8 @@ ssh "$VPS" docker ps | grep soroka-bot
 After successful deployment, tell the user:
 
 > "Готово. Открой Telegram, найди своего бота и отправь /start.
->  Бот проведёт через 6 шагов: ключи Jina, Deepgram, OpenRouter,
->  выбор моделей, GitHub-зеркало и канал-инбокс."
+>  Бот проведёт через 4 шага: ключи Jina и Deepgram,
+>  GitHub-зеркало и канал-инбокс."
 
 ## Diagnostics
 
@@ -77,15 +77,18 @@ VPS — no local rsync, no flags.
 - Single Docker container (`soroka-bot`) running `python -m src.bot.main`.
 - SQLite database at `<repo>/data/soroka.db` (FTS5 + sqlite-vec). Repo lives
   wherever the user did `git clone` — typically `~/soroka` or `/root/soroka`.
-- All user secrets except `TELEGRAM_BOT_TOKEN` and `OWNER_TELEGRAM_ID` live in
-  the `owners` table, populated through `/start` in Telegram.
+- All user secrets and env-backed backup config live in `<repo>/.env`: installer writes
+  `TELEGRAM_BOT_TOKEN` and `OWNER_TELEGRAM_ID`; the bot writes Jina,
+  Deepgram, GitHub repo, and GitHub token during `/start` or `/set*`.
+  Optional OpenAI/Gemini model selectors and API keys also live in `.env`.
+  Non-secret owner state remains in the `owners` table.
 - The MCP server (`src/mcp/server.py`) is invoked on demand via
   `docker exec -i soroka-bot python -m src.mcp.server` — wrapped by
   `/usr/local/bin/soroka-mcp` for SSH-stdio access.
 
 ## Files you must NOT touch on the VPS
 
-- `<repo>/.env` — installer wrote it, leave it alone
+- `<repo>/.env` — installer and bot write runtime secrets, leave it alone
 - `<repo>/data/soroka.db` — SQLite database
 - `<repo>/data/attachments/` — user files
 

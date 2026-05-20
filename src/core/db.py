@@ -6,13 +6,6 @@ import sqlite_vec
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS owners (
     telegram_id            INTEGER PRIMARY KEY,
-    jina_api_key           TEXT,
-    deepgram_api_key       TEXT,
-    openrouter_key         TEXT,
-    primary_model          TEXT,
-    fallback_model         TEXT,
-    github_token           TEXT,
-    github_mirror_repo     TEXT,
     vps_host               TEXT,
     vps_user               TEXT,
     inbox_chat_id          INTEGER,
@@ -109,6 +102,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE owners ADD COLUMN backup_failure_count INTEGER DEFAULT 0"
         )
+    conn.execute(
+        "UPDATE owners SET setup_step = 'github' "
+        "WHERE setup_step IN ('openrouter', 'models')"
+    )
     conn.commit()
 
 

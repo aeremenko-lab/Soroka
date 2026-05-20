@@ -11,23 +11,20 @@ logger = logging.getLogger(__name__)
 
 from src.adapters.jina import JinaClient
 from src.adapters.deepgram import DeepgramClient
-from src.adapters.openrouter import OpenRouterClient
 from src.core.owners import (
     create_or_get_owner, get_owner, update_owner_field, advance_setup_step,
 )
 from src.bot.auth import is_owner, owner_only
-from src.bot.handlers.setup_models import register_model_handlers
 
 PROMPTS = {
-    "jina":      "Шаг 1/6 — ключ Jina.\nЗайди на jina.ai → API → Free tier.\nПришли ключ сообщением.",
-    "deepgram":  "Шаг 2/6 — ключ Deepgram.\nЗайди на deepgram.com, создай API key.\nПришли ключ сообщением.",
-    "openrouter":"Шаг 3/6 — ключ OpenRouter.\nЗайди на openrouter.ai/keys.\nПришли ключ сообщением.",
-    "models":    "Шаг 4/6 — выбор моделей. Сейчас покажу рекомендуемые — нажимай кнопки.",
-    "github":    ("Шаг 5/6 — резервное копирование на GitHub (можно /skip).\n\n"
+    "jina":      "Шаг 1/4 — ключ Jina.\nЗайди на jina.ai → API → Free tier.\nПришли ключ сообщением.",
+    "deepgram":  "Шаг 2/4 — ключ Deepgram.\nЗайди на deepgram.com, создай API key.\nПришли ключ сообщением.",
+    "github":    ("Шаг 3/4 — резервное копирование на GitHub (можно /skip).\n\n"
                   "Сначала создай **приватный** репозиторий на github.com/new "
                   "(имя любое, например `soroka-data`).\n\n"
-                  "Когда создашь — пришли его сюда в формате `username/repo`."),
-    "channel":   ("Шаг 6/6 — твой канал-инбокс.\n\n"
+                  "Когда создашь — пришли его сюда в формате `username/repo` "
+                  "или ссылкой на GitHub."),
+    "channel":   ("Шаг 4/4 — твой канал-инбокс.\n\n"
                   "Это твоё личное место в Telegram, куда ты будешь скидывать всё, "
                   "что хочешь сохранить (статьи, голосовые, ссылки, файлы). "
                   "Я индексирую каждое сообщение и потом ищу по ним.\n\n"
@@ -54,6 +51,43 @@ DONE_MESSAGE = (
 )
 
 
+KEEP_MARKERS = {".", "keep", "оставить", "продолжить"}
+
+
+def _mask(v: str | None) -> str:
+    if not v:
+        return ""
+    return f"…{v[-4:]}"
+
+
+def _wants_keep(text: str) -> bool:
+    clean = text.strip().lower()
+    return clean == "" or clean in KEEP_MARKERS
+
+
+def prompt_for_step(conn: sqlite3.Connection, owner_id: int, step: str) -> str:
+    owner = get_owner(conn, owner_id)
+    if not owner:
+        return PROMPTS[step]
+
+    if step == "jina" and owner.jina_api_key:
+        return (
+            "Шаг 1/4 — ключ Jina.\n"
+            f"В `.env` уже есть ключ `{_mask(owner.jina_api_key)}`.\n"
+            "Отправьте новое значение, чтобы заменить его, или `.` чтобы оставить."
+        )
+    if step == "deepgram" and owner.deepgram_api_key:
+        return (
+            "Шаг 2/4 — ключ Deepgram.\n"
+            f"В `.env` уже есть ключ `{_mask(owner.deepgram_api_key)}`.\n"
+            "Отправьте новое значение, чтобы заменить его, или `.` чтобы оставить."
+        )
+    if step == "github":
+        from src.bot.handlers.setup_github import prompt_for_github_step
+        return prompt_for_github_step(owner)
+    return PROMPTS[step]
+
+
 async def process_setup_message(conn: sqlite3.Connection, owner_id: int,
                                  text: str) -> str:
     """Pure logic of the setup wizard. Returns the next prompt to send."""
@@ -61,28 +95,26 @@ async def process_setup_message(conn: sqlite3.Connection, owner_id: int,
     step = owner.setup_step or "jina"
 
     if step == "jina":
-        client = JinaClient(api_key=text.strip())
+        api_key = owner.jina_api_key if _wants_keep(text) else text.strip()
+        if not api_key:
+            return PROMPTS["jina"]
+        client = JinaClient(api_key=api_key)
         if not await client.validate_key():
             return "Ключ Jina не подошёл. Попробуй ещё раз."
-        update_owner_field(conn, owner_id, "jina_api_key", text.strip())
+        update_owner_field(conn, owner_id, "jina_api_key", api_key)
         advance_setup_step(conn, owner_id, "deepgram")
-        return PROMPTS["deepgram"]
+        return prompt_for_step(conn, owner_id, "deepgram")
 
     if step == "deepgram":
-        client = DeepgramClient(api_key=text.strip())
+        api_key = owner.deepgram_api_key if _wants_keep(text) else text.strip()
+        if not api_key:
+            return PROMPTS["deepgram"]
+        client = DeepgramClient(api_key=api_key)
         if not await client.validate_key():
             return "Ключ Deepgram не подошёл. Попробуй ещё раз."
-        update_owner_field(conn, owner_id, "deepgram_api_key", text.strip())
-        advance_setup_step(conn, owner_id, "openrouter")
-        return PROMPTS["openrouter"]
-
-    if step == "openrouter":
-        client = OpenRouterClient(api_key=text.strip())
-        if not await client.validate_key():
-            return "Ключ OpenRouter не подошёл. Попробуй ещё раз."
-        update_owner_field(conn, owner_id, "openrouter_key", text.strip())
-        advance_setup_step(conn, owner_id, "models")
-        return "Ключ принят. Сейчас покажу список моделей — отправь /models."
+        update_owner_field(conn, owner_id, "deepgram_api_key", api_key)
+        advance_setup_step(conn, owner_id, "github")
+        return prompt_for_step(conn, owner_id, "github")
 
     if step == "github":
         # Parsed in Task 17 (github step handler)
@@ -93,7 +125,7 @@ async def process_setup_message(conn: sqlite3.Connection, owner_id: int,
         # Set via forward handler — see Task 18
         return "Жду форвард сообщения из канала «Избранное 2»."
 
-    if step == "done" or step == "models":
+    if step == "done":
         return ""  # ignore — handled by other handlers
 
     return "Не понимаю. Попробуй /start."
@@ -113,11 +145,6 @@ async def setup_text_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
         return  # search / forward handlers take over
 
     text = update.message.text or ""
-
-    if owner.setup_step == "models":
-        from src.bot.handlers.setup_models import handle_custom_model_text
-        await handle_custom_model_text(ctx, text, update.message)
-        return
 
     try:
         reply = await process_setup_message(conn, settings.owner_telegram_id, text)
@@ -220,7 +247,8 @@ async def start_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         owner = get_owner(conn, settings.owner_telegram_id)
 
     await msg.reply_text(
-        "Привет! Я Soroka. Настроим за 5 минут.\n\n" + PROMPTS[owner.setup_step]
+        "Привет! Я Soroka. Настроим за 5 минут.\n\n"
+        + prompt_for_step(conn, settings.owner_telegram_id, owner.setup_step)
     )
 
 
@@ -235,4 +263,3 @@ def register_setup_handlers(app: Application) -> None:
         filters.ChatType.PRIVATE & filters.TEXT & ~filters.FORWARDED & ~filters.COMMAND,
         setup_text_handler,
     ))
-    register_model_handlers(app)

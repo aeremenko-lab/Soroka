@@ -165,6 +165,18 @@ echo "→ Записываю .env..."
 $SUDO tee .env >/dev/null <<ENV
 TELEGRAM_BOT_TOKEN=$TG_TOKEN
 OWNER_TELEGRAM_ID=$OWNER_ID
+
+# Optional LLM for URL summaries and search reranking.
+# Examples:
+# SOROKA_LLM_MODEL=openai:gpt-4.1-mini
+# SOROKA_LLM_MODEL=gemini:gemini-2.5-flash
+SOROKA_LLM_MODEL=
+SOROKA_OPENAI_API_KEY=
+SOROKA_GEMINI_API_KEY=
+
+# Optional GitHub backup target. The /start wizard can fill this too.
+SOROKA_GITHUB_REPO=
+SOROKA_GITHUB_TOKEN=
 ENV
 $SUDO chmod 600 .env
 

@@ -86,9 +86,7 @@ async def _save_or_update_note(conn: sqlite3.Connection, *, jina,
 async def ingest_text(conn: sqlite3.Connection, *, jina, owner_id: int,
                       tg_chat_id: int, tg_message_id: int,
                       text: str, caption: Optional[str], created_at: int,
-                      is_edit: bool = False,
-                      openrouter=None, primary_model: Optional[str] = None,
-                      fallback_model: Optional[str] = None,
+                      is_edit: bool = False, llm=None,
                       ) -> Optional[int]:
     if not text.strip():
         return None
@@ -123,13 +121,13 @@ async def ingest_text(conn: sqlite3.Connection, *, jina, owner_id: int,
         is_thin = False
 
     # For URL kinds (web/youtube) whose extracted body is non-Russian, ask
-    # the LLM for a short Russian description. Skipped silently if the
-    # caller didn't pass an openrouter client (tests, edit-replay paths).
+    # the configured LLM for a short Russian description. Skipped silently
+    # if the caller did not provide an LLM client.
     #
     # Edit-cache: if this is an edit of a note that already carries a
     # summary for the same source_url, reuse it. Caption-only edits are
-    # frequent (typo fixes, hashtag cleanup) and re-billing OpenRouter
-    # for them produces the same answer at extra cost and latency.
+    # frequent (typo fixes, hashtag cleanup) and a fresh LLM call would
+    # produce the same answer at extra cost and latency.
     ru_summary: Optional[str] = None
     if (kind in ("web", "youtube")
             and extracted_only
@@ -141,10 +139,7 @@ async def ingest_text(conn: sqlite3.Connection, *, jina, owner_id: int,
         if cached:
             ru_summary = cached
         else:
-            ru_summary = await summarize_ru(
-                openrouter, primary=primary_model, fallback=fallback_model,
-                text=extracted_only,
-            )
+            ru_summary = await summarize_ru(llm, text=extracted_only)
 
     # Concat the Russian summary into the embedding text so RU queries
     # surface foreign-language links via the dense index too. Stored body

@@ -21,6 +21,66 @@ def test_update_owner_field_round_trip(tmp_path):
     update_owner_field(conn, 42, "jina_api_key", "abc")
     o = get_owner(conn, 42)
     assert o.jina_api_key == "abc"
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(owners)").fetchall()}
+    assert "jina_api_key" not in cols
+    assert "SOROKA_JINA_API_KEY=abc" in (tmp_path / ".env").read_text()
+
+
+def test_update_owner_field_writes_github_repo_to_env(tmp_path):
+    conn = open_db(str(tmp_path / "x.db"))
+    init_schema(conn)
+    create_or_get_owner(conn, telegram_id=42)
+
+    update_owner_field(conn, 42, "github_mirror_repo", "me/soroka-data")
+
+    owner = get_owner(conn, 42)
+    assert owner.github_mirror_repo == "me/soroka-data"
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(owners)").fetchall()}
+    assert "github_mirror_repo" not in cols
+    assert "SOROKA_GITHUB_REPO=me/soroka-data" in (tmp_path / ".env").read_text()
+
+
+def test_migrate_owner_secrets_to_env_clears_legacy_db(tmp_path):
+    from src.core.owners import migrate_owner_secrets_to_env
+
+    db_path = tmp_path / "legacy.db"
+    conn = open_db(str(db_path))
+    conn.execute("""CREATE TABLE owners (
+        telegram_id INTEGER PRIMARY KEY,
+        jina_api_key TEXT,
+        deepgram_api_key TEXT,
+        openrouter_key TEXT,
+        primary_model TEXT,
+        fallback_model TEXT,
+        github_token TEXT,
+        github_mirror_repo TEXT,
+        vps_host TEXT,
+        vps_user TEXT,
+        inbox_chat_id INTEGER,
+        setup_step TEXT,
+        last_backup_at TEXT,
+        last_backup_error TEXT,
+        backup_failure_count INTEGER DEFAULT 0,
+        created_at INTEGER NOT NULL
+    )""")
+    conn.execute(
+        "INSERT INTO owners (telegram_id, jina_api_key, openrouter_key, "
+        "github_token, github_mirror_repo, created_at) "
+        "VALUES (42, 'jina-old', 'obsolete-old', 'ghp_old', 'me/old-repo', 1)"
+    )
+    conn.commit()
+
+    migrate_owner_secrets_to_env(conn, 42)
+
+    owner = get_owner(conn, 42)
+    assert owner.jina_api_key == "jina-old"
+    assert owner.github_token == "ghp_old"
+    assert owner.github_mirror_repo == "me/old-repo"
+    row = conn.execute(
+        "SELECT jina_api_key, openrouter_key, github_token, github_mirror_repo "
+        "FROM owners WHERE telegram_id=42"
+    ).fetchone()
+    assert row == (None, None, None, None)
 
 def test_advance_setup_step_writes_step(tmp_path):
     conn = open_db(str(tmp_path / "x.db"))

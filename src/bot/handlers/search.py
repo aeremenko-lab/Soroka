@@ -6,7 +6,7 @@ from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from src.adapters.deepgram import DeepgramClient
 from src.adapters.jina import JinaClient
-from src.adapters.openrouter import OpenRouterClient
+from src.adapters.llm import build_llm_client
 from src.bot.auth import is_owner
 from src.bot.handlers._search_format import format_hit
 from src.core.intent import parse_intent
@@ -103,10 +103,9 @@ async def search_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
             return
 
         await ctx.bot.send_chat_action(chat_id=msg.chat.id, action="typing")
-        openrouter = OpenRouterClient(api_key=owner.openrouter_key)
+        llm = build_llm_client()
         reranked = await rerank(
-            openrouter, primary=owner.primary_model, fallback=owner.fallback_model,
-            query=intent.clean_query, candidates=candidates, top_k=20,
+            llm, query=intent.clean_query, candidates=candidates, top_k=20,
         )
         if not reranked:
             await msg.reply_text("Не нашёл ничего релевантного.")
