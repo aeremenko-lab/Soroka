@@ -16,11 +16,13 @@ set -euo pipefail
 
 TG_TOKEN=""
 OWNER_ID=""
+TG_TOKEN_FROM_FLAG=0
+OWNER_ID_FROM_FLAG=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --tg-token) TG_TOKEN="$2"; shift 2;;
-    --owner-id) OWNER_ID="$2"; shift 2;;
+    --tg-token) TG_TOKEN="$2"; TG_TOKEN_FROM_FLAG=1; shift 2;;
+    --owner-id) OWNER_ID="$2"; OWNER_ID_FROM_FLAG=1; shift 2;;
     *) echo "unknown flag: $1" >&2; exit 1;;
   esac
 done
@@ -63,13 +65,66 @@ MSG
   exit 1
 fi
 
-read_if_empty() {
-  local var_name="$1" prompt="$2"
-  if [[ -z "${!var_name}" ]]; then
+read_env_value() {
+  local key="$1"
+  [[ -f .env ]] || return 0
+  awk -v key="$key" '
+    $0 ~ "^[[:space:]]*(export[[:space:]]+)?" key "[[:space:]]*=" {
+      sub("^[[:space:]]*(export[[:space:]]+)?", "", $0)
+      sub("^[^=]*=[[:space:]]*", "", $0)
+      sub(/\r$/, "", $0)
+      if (($0 ~ /^".*"$/) || ($0 ~ /^\047.*\047$/)) {
+        print substr($0, 2, length($0) - 2)
+      } else {
+        print $0
+      }
+      exit
+    }
+  ' .env
+}
+
+read_or_keep() {
+  local var_name="$1" prompt="$2" mode="${3:-plain}"
+  local current="${!var_name}"
+  local value
+  if [[ -n "$current" ]]; then
+    if [[ "$mode" == "secret" ]]; then
+      read -rp "$prompt [уже задан, Enter оставить]: " value
+    else
+      read -rp "$prompt [$current, Enter оставить]: " value
+    fi
+    if [[ -n "$value" ]]; then
+      printf -v "$var_name" "%s" "$value"
+    fi
+  else
     read -rp "$prompt: " value
     printf -v "$var_name" "%s" "$value"
   fi
 }
+
+if [[ -f .env ]]; then
+  echo "Найден существующий .env — сохраню уже заданные значения, если не заменить их в подсказках."
+fi
+
+if [[ -z "$TG_TOKEN" ]]; then
+  TG_TOKEN="$(read_env_value TELEGRAM_BOT_TOKEN || true)"
+fi
+if [[ -z "$OWNER_ID" ]]; then
+  OWNER_ID="$(read_env_value OWNER_TELEGRAM_ID || true)"
+fi
+
+SOROKA_JINA_API_KEY="$(read_env_value SOROKA_JINA_API_KEY || true)"
+SOROKA_DEEPGRAM_API_KEY="$(read_env_value SOROKA_DEEPGRAM_API_KEY || true)"
+SOROKA_GITHUB_REPO="$(read_env_value SOROKA_GITHUB_REPO || true)"
+SOROKA_GITHUB_TOKEN="$(read_env_value SOROKA_GITHUB_TOKEN || true)"
+SOROKA_LLM_MODEL="$(read_env_value SOROKA_LLM_MODEL || true)"
+SOROKA_LLM_PROVIDER="$(read_env_value SOROKA_LLM_PROVIDER || true)"
+SOROKA_OPENAI_API_KEY="$(read_env_value SOROKA_OPENAI_API_KEY || true)"
+SOROKA_GEMINI_API_KEY="$(read_env_value SOROKA_GEMINI_API_KEY || true)"
+SOROKA_OWNER_TZ="$(read_env_value SOROKA_OWNER_TZ || true)"
+SOROKA_DB_PATH="$(read_env_value SOROKA_DB_PATH || true)"
+SOROKA_VPS_USER="$(read_env_value SOROKA_VPS_USER || true)"
+SOROKA_VPS_HOST="$(read_env_value SOROKA_VPS_HOST || true)"
 
 echo "🐦 Soroka — installer"
 echo
@@ -86,7 +141,9 @@ echo
 echo "Получи у @BotFather: команда /newbot → длинная строка вида"
 echo "  1234567:AAC××××××××××××××××××××××××××××××××××××"
 echo
-read_if_empty TG_TOKEN "Токен бота"
+if (( TG_TOKEN_FROM_FLAG == 0 )); then
+  read_or_keep TG_TOKEN "Токен бота" secret
+fi
 
 echo
 echo "──────────────────────────────────────────────────────────────"
@@ -95,7 +152,22 @@ echo
 echo "Это ID твоего профиля. Узнай: напиши /start боту @userinfobot —"
 echo "он пришлёт число вроде 123456789."
 echo
-read_if_empty OWNER_ID "Telegram-ID"
+if (( OWNER_ID_FROM_FLAG == 0 )); then
+  read_or_keep OWNER_ID "Telegram-ID"
+fi
+
+if [[ -z "$TG_TOKEN" ]]; then
+  echo "✗ TELEGRAM_BOT_TOKEN пустой. Укажите токен или оставьте существующий в .env." >&2
+  exit 1
+fi
+if [[ -z "$OWNER_ID" ]]; then
+  echo "✗ OWNER_TELEGRAM_ID пустой. Укажите Telegram-ID или оставьте существующий в .env." >&2
+  exit 1
+fi
+if ! [[ "$OWNER_ID" =~ ^[0-9]+$ ]]; then
+  echo "✗ OWNER_TELEGRAM_ID должен быть числом, получено: $OWNER_ID" >&2
+  exit 1
+fi
 
 echo
 echo "──────────────────────────────────────────────────────────────"
@@ -162,22 +234,29 @@ fi
 echo "  ✓ зависимости готовы"
 
 echo "→ Записываю .env..."
-$SUDO tee .env >/dev/null <<ENV
-TELEGRAM_BOT_TOKEN=$TG_TOKEN
-OWNER_TELEGRAM_ID=$OWNER_ID
-
-# Optional LLM for URL summaries and search reranking.
-# Examples:
-# SOROKA_LLM_MODEL=openai:gpt-4.1-mini
-# SOROKA_LLM_MODEL=gemini:gemini-2.5-flash
-SOROKA_LLM_MODEL=
-SOROKA_OPENAI_API_KEY=
-SOROKA_GEMINI_API_KEY=
-
-# Optional GitHub backup target. The /start wizard can fill this too.
-SOROKA_GITHUB_REPO=
-SOROKA_GITHUB_TOKEN=
-ENV
+{
+  printf 'TELEGRAM_BOT_TOKEN=%s\n' "$TG_TOKEN"
+  printf 'OWNER_TELEGRAM_ID=%s\n' "$OWNER_ID"
+  [[ -n "$SOROKA_OWNER_TZ" ]] && printf 'SOROKA_OWNER_TZ=%s\n' "$SOROKA_OWNER_TZ"
+  [[ -n "$SOROKA_DB_PATH" ]] && printf 'SOROKA_DB_PATH=%s\n' "$SOROKA_DB_PATH"
+  [[ -n "$SOROKA_VPS_USER" ]] && printf 'SOROKA_VPS_USER=%s\n' "$SOROKA_VPS_USER"
+  [[ -n "$SOROKA_VPS_HOST" ]] && printf 'SOROKA_VPS_HOST=%s\n' "$SOROKA_VPS_HOST"
+  printf '\n'
+  printf '# Filled by the /start wizard and /set* commands.\n'
+  printf 'SOROKA_JINA_API_KEY=%s\n' "$SOROKA_JINA_API_KEY"
+  printf 'SOROKA_DEEPGRAM_API_KEY=%s\n' "$SOROKA_DEEPGRAM_API_KEY"
+  printf 'SOROKA_GITHUB_REPO=%s\n' "$SOROKA_GITHUB_REPO"
+  printf 'SOROKA_GITHUB_TOKEN=%s\n' "$SOROKA_GITHUB_TOKEN"
+  printf '\n'
+  printf '# Optional LLM for URL summaries and search reranking.\n'
+  printf '# Examples:\n'
+  printf '# SOROKA_LLM_MODEL=openai:gpt-4.1-mini\n'
+  printf '# SOROKA_LLM_MODEL=gemini:gemini-2.5-flash\n'
+  [[ -n "$SOROKA_LLM_PROVIDER" ]] && printf 'SOROKA_LLM_PROVIDER=%s\n' "$SOROKA_LLM_PROVIDER"
+  printf 'SOROKA_LLM_MODEL=%s\n' "$SOROKA_LLM_MODEL"
+  printf 'SOROKA_OPENAI_API_KEY=%s\n' "$SOROKA_OPENAI_API_KEY"
+  printf 'SOROKA_GEMINI_API_KEY=%s\n' "$SOROKA_GEMINI_API_KEY"
+} | $SUDO tee .env >/dev/null
 $SUDO chmod 600 .env
 
 echo "→ Запускаю контейнер..."
